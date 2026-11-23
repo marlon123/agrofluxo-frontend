@@ -1,6 +1,8 @@
 import { AlertCircle, ArrowLeft, ArrowRight, Check, ChevronRight, ClipboardCheck, CloudRain, Droplets, Leaf, LockKeyhole, Mountain, Sprout, Waves } from 'lucide-react'
 import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
+import { getManejoStepCompletion, isDailyDataValid } from '../lib/manejoFlow'
+import type { DailyFormData } from '../lib/manejoFlow'
 
 type Step = { title: string; description: string; icon: typeof Sprout }
 type FormState = { launchDate: string; irrigationDay: string; etp: string; precipitation: string; realIrrigation: string }
@@ -16,7 +18,12 @@ export function ManejoPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [form, setForm] = useState<FormState>(initialForm)
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({})
-  const updateField = (field: keyof FormState, value: string) => { setForm((current) => ({ ...current, [field]: value })); setErrors((current) => ({ ...current, [field]: undefined })) }
+  const [reviewConfirmed, setReviewConfirmed] = useState(false)
+  const areaReady = false
+  const resultAvailable = false
+  const dailyDataValid = isDailyDataValid(form)
+  const completedSteps = getManejoStepCompletion({ areaReady, dailyDataValid, reviewConfirmed, resultAvailable })
+  const updateField = (field: keyof FormState, value: string) => { setForm((current) => ({ ...current, [field]: value })); setErrors((current) => ({ ...current, [field]: undefined })); setReviewConfirmed(false) }
   const goToStep = (step: number) => { setCurrentStep(step); setErrors({}) }
   const validateDailyData = () => {
     const nextErrors: Partial<Record<keyof FormState, string>> = {}
@@ -31,7 +38,7 @@ export function ManejoPage() {
   const previous = () => { if (currentStep > 0) setCurrentStep((step) => step - 1) }
   return <div>
     <PageHeader eyebrow="Operação" title="Manejo hídrico" description="Percorra as etapas para preparar um balanço hídrico." />
-    <section className="workflow-stepper" aria-label="Etapas do manejo hídrico">{steps.map((step, index) => { const Icon = step.icon; return <button key={step.title} className={`workflow-step ${index === currentStep ? 'current' : ''} ${index < currentStep ? 'completed' : ''}`} onClick={() => goToStep(index)}><span className="step-index">{index < currentStep ? <Check size={14} /> : index + 1}</span><span className="step-copy"><strong>{step.title}</strong><small>{step.description}</small></span>{index < steps.length - 1 && <ChevronRight className="step-chevron" size={17} />}{index === currentStep && <Icon className="step-mobile-icon" size={17} />}</button> })}</section>
+    <section className="workflow-stepper" aria-label="Etapas do manejo hídrico">{steps.map((step, index) => { const Icon = step.icon; const isCurrent = index === currentStep; const isCompleted = completedSteps[index] && !isCurrent; return <button key={step.title} className={`workflow-step ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''}`} onClick={() => goToStep(index)} aria-current={isCurrent ? 'step' : undefined}><span className="step-index">{isCompleted ? <Check size={14} /> : index + 1}</span><span className="step-copy"><strong>{step.title}</strong><small>{step.description}</small></span>{index < steps.length - 1 && <ChevronRight className="step-chevron" size={17} />}{isCurrent && <Icon className="step-mobile-icon" size={17} />}</button> })}</section>
     <div className="workflow-content">{currentStep === 0 && <AreaStep onNext={next} />}{currentStep === 1 && <DailyStep form={form} errors={errors} updateField={updateField} onBack={previous} onNext={next} />}{currentStep === 2 && <ReviewStep form={form} onBack={() => goToStep(1)} onNext={next} />}{currentStep === 3 && <ResultStep onBack={() => goToStep(2)} />}</div>
   </div>
 }
