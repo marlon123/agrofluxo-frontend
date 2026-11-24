@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { getActiveManagementPlan, getClosedManagementPlans, toManagementPlanInput, validateManagementPlanForm } from '../src/lib/managementPlans.ts'
 import { getManejoStepCompletion } from '../src/lib/manejoFlow.ts'
+import { getDailyFormValues, mergeDailyLaunchRecords, validateDailyLaunchForm } from '../src/lib/dailyLaunch.ts'
 import type { ManagementPlan } from '../src/lib/api/types.ts'
 
 const basePlan = (id: string, endDate: string | null): ManagementPlan => ({ id, areaId: 'area', cropId: `crop-${id}`, soilProfileId: `soil-${id}`, startDate: '2026-01-01', endDate, fFactor: 0.5, sprinklerRateMmPerHour: 5 })
@@ -36,4 +37,18 @@ test('monta o payload de criação com os valores em fração decimal', () => {
 test('conclui a revisão somente após a confirmação com dados válidos', () => {
   assert.deepEqual(getManejoStepCompletion({ areaReady: true, dailyDataValid: true, reviewConfirmed: false, resultAvailable: false }), [true, true, false, false])
   assert.deepEqual(getManejoStepCompletion({ areaReady: true, dailyDataValid: true, reviewConfirmed: true, resultAvailable: false }), [true, true, true, false])
+})
+
+test('carrega e combina lançamentos preservando valores zero', () => {
+  const weather = [{ id: 'weather', areaId: 'area', date: '2026-11-24', etpMm: 4.25, precipitationMm: 0 }]
+  const irrigation = [{ id: 'irrigation', areaId: 'area', date: '2026-11-24', appliedIrrigationMm: 0 }]
+  assert.deepEqual(getDailyFormValues('2026-11-24', weather, irrigation), { etp: '4.25', precipitation: '0', realIrrigation: '0', complete: true })
+  assert.deepEqual(mergeDailyLaunchRecords(weather, irrigation), [{ date: '2026-11-24', etpMm: 4.25, precipitationMm: 0, appliedIrrigationMm: 0 }])
+})
+
+test('valida lançamentos diários aceitando zero e rejeitando data futura', () => {
+  const valid = { launchDate: '2026-01-01', irrigationDay: '1', etp: '0', precipitation: '0', realIrrigation: '0' }
+  assert.deepEqual(validateDailyLaunchForm(valid), {})
+  assert.ok(validateDailyLaunchForm({ ...valid, launchDate: '2999-01-01' }).launchDate)
+  assert.ok(validateDailyLaunchForm({ ...valid, etp: '1.001' }).etp)
 })

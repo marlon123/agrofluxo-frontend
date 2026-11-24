@@ -1,5 +1,5 @@
 import { apiClient, buildQuery } from './client'
-import type { Area, AreaInput, Crop, CropInput, ManagementPlan, ManagementPlanInput, PagedResponse, SoilProfile, SoilProfileInput } from './types'
+import type { AppliedIrrigation, AppliedIrrigationInput, Area, AreaInput, Crop, CropInput, DailyWeather, DailyWeatherInput, ManagementPlan, ManagementPlanInput, PagedResponse, SoilProfile, SoilProfileInput } from './types'
 
 export const areasService = {
   list: (params: { page: number; size: number; sortBy?: 'name' | 'areaHectares'; direction?: 'asc' | 'desc' }) => apiClient.get<PagedResponse<Area>>(`/areas${buildQuery(params)}`),
@@ -30,4 +30,14 @@ export const managementPlansService = {
   get: (areaId: string, planId: string) => apiClient.get<ManagementPlan>(`/areas/${areaId}/management-plans/${planId}`),
   create: (areaId: string, input: ManagementPlanInput) => apiClient.post<ManagementPlan>(`/areas/${areaId}/management-plans`, input),
   update: (areaId: string, planId: string, input: ManagementPlanInput) => apiClient.put<ManagementPlan>(`/areas/${areaId}/management-plans/${planId}`, input),
+}
+
+export const dailyWeatherService = {
+  list: (areaId: string, params: { from: string; to: string }) => apiClient.get<DailyWeather[]>(`/areas/${areaId}/daily-weather${buildQuery(params)}`),
+  upsert: (areaId: string, input: DailyWeatherInput) => apiClient.post<DailyWeather>(`/areas/${areaId}/daily-weather`, input),
+}
+
+export const appliedIrrigationService = {
+  list: (areaId: string, params: { from: string; to: string }) => apiClient.get<AppliedIrrigation[]>(`/areas/${areaId}/applied-irrigation${buildQuery(params)}`),
+  upsert: (areaId: string, input: AppliedIrrigationInput) => apiClient.post<AppliedIrrigation>(`/areas/${areaId}/applied-irrigation`, input),
 }

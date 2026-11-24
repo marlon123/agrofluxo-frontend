@@ -2,15 +2,18 @@ import { AlertCircle, ArrowLeft, ArrowRight, Check, ChevronRight, ClipboardCheck
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ManagementPlanDialog } from '../components/ManagementPlanDialog'
 import { ManagementPlanSummary } from '../components/ManagementPlanSummary'
+import { DailyLaunchStep } from '../components/DailyLaunchStep'
 import { ReviewStep as ReviewStepWithContext } from '../components/ReviewStep'
 import { ErrorState, LoadingState } from '../components/ResourceFeedback'
 import { PageHeader } from '../components/PageHeader'
-import { areasService, cropsService, managementPlansService, soilProfilesService } from '../lib/api/services'
-import { getApiErrorMessage } from '../lib/api/client'
+import { appliedIrrigationService, areasService, cropsService, dailyWeatherService, managementPlansService, soilProfilesService } from '../lib/api/services'
+import { getApiErrorMessage, getFieldErrors } from '../lib/api/client'
 import { getManejoStepCompletion, isDailyDataValid } from '../lib/manejoFlow'
 import { getActiveManagementPlan, getClosedManagementPlans } from '../lib/managementPlans'
+import { getDailyFormValues, getDailyQueryRange, mergeDailyLaunchRecords, todayUtc, validateDailyLaunchForm } from '../lib/dailyLaunch'
 import type { Area, Crop, ManagementPlan, PagedResponse, SoilProfile } from '../lib/api/types'
 import type { DailyFormData } from '../lib/manejoFlow'
+import type { DailyLaunchRecord } from '../lib/dailyLaunch'
 
 type Step = { title: string; description: string; icon: typeof Sprout }
 type FormState = DailyFormData
@@ -51,7 +54,13 @@ export function ManejoPage() {
   const [plansError, setPlansError] = useState('')
   const [notice, setNotice] = useState('')
   const [planDialog, setPlanDialog] = useState<{ mode: 'create' | 'edit'; item?: ManagementPlan } | null>(null)
+  const [dailyRecords, setDailyRecords] = useState<DailyLaunchRecord[]>([])
+  const [dailyLoading, setDailyLoading] = useState(false)
+  const [dailySaving, setDailySaving] = useState(false)
+  const [dailySaved, setDailySaved] = useState(false)
+  const [dailyError, setDailyError] = useState('')
   const selectionRequest = useRef(0)
+  const dailyRequest = useRef(0)
 
   const loadCatalogs = async () => {
     setCatalogLoading(true); setCatalogError('')
@@ -93,8 +102,9 @@ export function ManejoPage() {
   const selectArea = (areaId: string) => {
     const requestId = selectionRequest.current + 1
     selectionRequest.current = requestId
-    setSelectedAreaId(areaId); setPlans([]); setPlansError(''); setNotice(''); setPlanDialog(null)
-    if (areaId) void loadPlans(areaId, requestId)
+    dailyRequest.current += 1
+    setSelectedAreaId(areaId); setPlans([]); setPlansError(''); setNotice(''); setPlanDialog(null); setDailyRecords([]); setDailyError(''); setDailySaved(false); setForm((current) => ({ ...initialForm, launchDate: current.launchDate }))
+    if (areaId) { void loadPlans(areaId, requestId); if (form.launchDate) void loadDailyEntries(areaId, form.launchDate) }
   }
 
   const retryPlans = () => { if (selectedAreaId) void loadPlans(selectedAreaId, selectionRequest.current) }
@@ -105,15 +115,55 @@ export function ManejoPage() {
     if (selectedAreaId) await loadPlans(selectedAreaId, selectionRequest.current)
   }
 
-  const updateField = (field: keyof FormState, value: string) => { setForm((current) => ({ ...current, [field]: value })); setErrors((current) => ({ ...current, [field]: undefined })); setReviewConfirmed(false) }
+  const loadDailyEntries = async (areaId: string, date: string) => {
+    const requestId = dailyRequest.current + 1
+    dailyRequest.current = requestId
+    setDailyLoading(true); setDailyError(''); setDailyRecords([]); setDailySaved(false)
+    if (!date || date > todayUtc()) { setDailyLoading(false); return }
+    try {
+      const range = getDailyQueryRange(date)
+      const [weather, irrigation] = await Promise.all([dailyWeatherService.list(areaId, range), appliedIrrigationService.list(areaId, range)])
+      if (requestId !== dailyRequest.current) return
+      const values = getDailyFormValues(date, weather, irrigation)
+      setDailyRecords(mergeDailyLaunchRecords(weather, irrigation))
+      setForm((current) => ({ ...current, launchDate: date, etp: values.etp, precipitation: values.precipitation, realIrrigation: values.realIrrigation }))
+      setDailySaved(values.complete)
+    } catch (error) {
+      if (requestId === dailyRequest.current) { setDailyRecords([]); setDailyError(getApiErrorMessage(error)) }
+    } finally {
+      if (requestId === dailyRequest.current) setDailyLoading(false)
+    }
+  }
+
+  const updateDailyField = (field: keyof FormState, value: string) => { setForm((current) => ({ ...current, [field]: value })); setErrors((current) => ({ ...current, [field]: undefined })); setDailySaved(false); setReviewConfirmed(false) }
+  const handleDailyDateChange = (value: string) => { setForm((current) => ({ ...current, launchDate: value, etp: '', precipitation: '', realIrrigation: '' })); setErrors({}); setDailyError(''); setDailySaved(false); setReviewConfirmed(false); if (selectedAreaId && value) void loadDailyEntries(selectedAreaId, value) }
+  const saveDailyData = async () => {
+    const nextErrors = validateDailyLaunchForm(form)
+    if (Object.keys(nextErrors).length) { setErrors(nextErrors); return false }
+    if (!selectedAreaId) { setDailyError('Selecione uma área antes de salvar o lançamento.'); return false }
+    setDailySaving(true); setDailyError(''); setErrors({})
+    try {
+      await Promise.all([
+        dailyWeatherService.upsert(selectedAreaId, { date: form.launchDate, etpMm: Number(form.etp), precipitationMm: Number(form.precipitation) }),
+        appliedIrrigationService.upsert(selectedAreaId, { date: form.launchDate, appliedIrrigationMm: Number(form.realIrrigation) }),
+      ])
+      setNotice('Lançamento diário salvo com sucesso.')
+      await loadDailyEntries(selectedAreaId, form.launchDate)
+      return true
+    } catch (error) {
+      const apiErrors = getFieldErrors(error)
+      const fieldErrors: Partial<Record<keyof FormState, string>> = { launchDate: apiErrors.date, etp: apiErrors.etpMm, precipitation: apiErrors.precipitationMm, realIrrigation: apiErrors.appliedIrrigationMm }
+      setErrors(fieldErrors); setDailyError(getApiErrorMessage(error)); return false
+    } finally { setDailySaving(false) }
+  }
+
+  const continueDaily = async () => { if (!validateDailyData()) return; if (await saveDailyData()) setCurrentStep(2) }
+
+  const updateField = updateDailyField
   const goToStep = (step: number) => { setCurrentStep(step); setErrors({}) }
   const validateDailyData = () => {
-    const nextErrors: Partial<Record<keyof FormState, string>> = {}
-    if (!form.launchDate) nextErrors.launchDate = 'Informe a data do lançamento.'
+    const nextErrors: Partial<Record<keyof FormState, string>> = { ...validateDailyLaunchForm(form) }
     if (!form.irrigationDay || !/^\d+$/.test(form.irrigationDay) || Number(form.irrigationDay) < 1) nextErrors.irrigationDay = 'Informe um dia válido.'
-    if (!form.etp || Number(form.etp) < 0) nextErrors.etp = 'Informe um valor igual ou maior que zero.'
-    if (!form.precipitation || Number(form.precipitation) < 0) nextErrors.precipitation = 'Informe um valor igual ou maior que zero.'
-    if (!form.realIrrigation || Number(form.realIrrigation) < 0) nextErrors.realIrrigation = 'Informe um valor igual ou maior que zero.'
     setErrors(nextErrors); return Object.keys(nextErrors).length === 0
   }
   const next = () => { if (currentStep === 0 && !areaReady) return; if (currentStep === 1 && !validateDailyData()) return; if (currentStep === 2 && (!areaReady || !dailyDataValid)) return; if (currentStep === 2) setReviewConfirmed(true); if (currentStep < steps.length - 1) setCurrentStep((step) => step + 1) }
@@ -123,7 +173,7 @@ export function ManejoPage() {
     <PageHeader eyebrow="Operação" title="Manejo hídrico" description="Percorra as etapas para preparar um balanço hídrico." />
     {notice && <div className="success-banner">{notice}<button onClick={() => setNotice('')} aria-label="Fechar mensagem">×</button></div>}
     <section className="workflow-stepper" aria-label="Etapas do manejo hídrico">{steps.map((step, index) => { const Icon = step.icon; const isCurrent = index === currentStep; const isCompleted = completedSteps[index] && !isCurrent; return <button key={step.title} className={`workflow-step ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''}`} onClick={() => goToStep(index)} aria-current={isCurrent ? 'step' : undefined}><span className="step-index">{isCompleted ? <Check size={14} /> : index + 1}</span><span className="step-copy"><strong>{step.title}</strong><small>{step.description}</small></span>{index < steps.length - 1 && <ChevronRight className="step-chevron" size={17} />}{isCurrent && <Icon className="step-mobile-icon" size={17} />}</button> })}</section>
-    <div className="workflow-content">{currentStep === 0 && <AreaStep areas={areas} selectedAreaId={selectedAreaId} selectedArea={selectedArea} onAreaChange={selectArea} catalogLoading={catalogLoading} catalogError={catalogError} onRetryCatalogs={loadCatalogs} activePlan={activePlan} closedPlans={closedPlans} cropNames={cropNames} soilNames={soilNames} plansLoading={plansLoading} plansError={plansError} onRetryPlans={retryPlans} onCreatePlan={openCreatePlan} onEditPlan={openEditPlan} areaReady={areaReady} onNext={next} />}{currentStep === 1 && <DailyStep form={form} errors={errors} updateField={updateField} onBack={previous} onNext={next} />}{currentStep === 2 && <ReviewStepWithContext form={form} selectedArea={selectedArea} activePlan={activePlan} cropNames={cropNames} soilNames={soilNames} onBack={() => goToStep(1)} onNext={next} />}{currentStep === 3 && <ResultStep onBack={() => goToStep(2)} />}</div>
+    <div className="workflow-content">{currentStep === 0 && <AreaStep areas={areas} selectedAreaId={selectedAreaId} selectedArea={selectedArea} onAreaChange={selectArea} catalogLoading={catalogLoading} catalogError={catalogError} onRetryCatalogs={loadCatalogs} activePlan={activePlan} closedPlans={closedPlans} cropNames={cropNames} soilNames={soilNames} plansLoading={plansLoading} plansError={plansError} onRetryPlans={retryPlans} onCreatePlan={openCreatePlan} onEditPlan={openEditPlan} areaReady={areaReady} onNext={next} />}{currentStep === 1 && <DailyLaunchStep form={form} errors={errors} history={dailyRecords} loading={dailyLoading} saving={dailySaving} saved={dailySaved} error={dailyError} onChange={updateDailyField} onDateChange={handleDailyDateChange} onBack={previous} onSave={saveDailyData} onContinue={continueDaily} />}{currentStep === 2 && <ReviewStepWithContext form={form} selectedArea={selectedArea} activePlan={activePlan} cropNames={cropNames} soilNames={soilNames} onBack={() => goToStep(1)} onNext={next} />}{currentStep === 3 && <ResultStep onBack={() => goToStep(2)} />}</div>
     {planDialog && selectedAreaId && <ManagementPlanDialog areaId={selectedAreaId} dialog={planDialog} crops={crops} soils={soils} onClose={() => setPlanDialog(null)} onSaved={onPlanSaved} />}
   </div>
 }
