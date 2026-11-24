@@ -23,3 +23,6 @@ export type CropInput = Omit<Crop, 'id'>
 
 export type SoilProfile = { id: UUID; soilType: string; fieldCapacity: number | null; permanentWiltingPoint: number | null; fieldCapacityGravimetricPct: number | null; permanentWiltingPointGravimetricPct: number | null; bulkDensity: number; effectiveRootDepth: number | null; availableWater: number | null; soilWaterUnit: MeasurementUnit | null; bulkDensityUnit: MeasurementUnit | null; rootDepthUnit: MeasurementUnit | null; availableWaterUnit: MeasurementUnit | null }
 export type SoilProfileInput = Omit<SoilProfile, 'id'>
+
+export type ManagementPlan = { id: UUID; areaId: UUID; cropId: UUID; soilProfileId: UUID; startDate: string; endDate: string | null; fFactor: number; sprinklerRateMmPerHour: number }
+export type ManagementPlanInput = { cropId: UUID | null; soilProfileId: UUID | null; startDate: string | null; endDate: string | null; fFactor: number; sprinklerRateMmPerHour: number }

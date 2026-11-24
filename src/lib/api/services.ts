@@ -1,5 +1,5 @@
 import { apiClient, buildQuery } from './client'
-import type { Area, AreaInput, Crop, CropInput, PagedResponse, SoilProfile, SoilProfileInput } from './types'
+import type { Area, AreaInput, Crop, CropInput, ManagementPlan, ManagementPlanInput, PagedResponse, SoilProfile, SoilProfileInput } from './types'
 
 export const areasService = {
   list: (params: { page: number; size: number; sortBy?: 'name' | 'areaHectares'; direction?: 'asc' | 'desc' }) => apiClient.get<PagedResponse<Area>>(`/areas${buildQuery(params)}`),
@@ -23,4 +23,11 @@ export const soilProfilesService = {
   create: (input: SoilProfileInput) => apiClient.post<SoilProfile>('/soil-profiles', input),
   update: (id: string, input: SoilProfileInput) => apiClient.put<SoilProfile>(`/soil-profiles/${id}`, input),
   remove: (id: string) => apiClient.delete(`/soil-profiles/${id}`),
+}
+
+export const managementPlansService = {
+  list: (areaId: string) => apiClient.get<ManagementPlan[]>(`/areas/${areaId}/management-plans`),
+  get: (areaId: string, planId: string) => apiClient.get<ManagementPlan>(`/areas/${areaId}/management-plans/${planId}`),
+  create: (areaId: string, input: ManagementPlanInput) => apiClient.post<ManagementPlan>(`/areas/${areaId}/management-plans`, input),
+  update: (areaId: string, planId: string, input: ManagementPlanInput) => apiClient.put<ManagementPlan>(`/areas/${areaId}/management-plans/${planId}`, input),
 }
